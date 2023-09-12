@@ -26,6 +26,7 @@ import (
 
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+
 	v1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -49,6 +50,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
+	autoscalingapiv2 "k8s.io/kubernetes/pkg/apis/autoscaling/v2"
 	"k8s.io/kubernetes/pkg/controller"
 	metricsclient "k8s.io/kubernetes/pkg/controller/podautoscaler/metrics"
 	"k8s.io/kubernetes/pkg/controller/podautoscaler/monitor"
@@ -986,8 +988,8 @@ func (a *HorizontalController) normalizeDesiredReplicasWithBehaviors(hpa *autosc
 	a.maybeInitScaleDownStabilizationWindow(hpa)
 	normalizationArg := NormalizationArg{
 		Key:               key,
-		ScaleUpBehavior:   hpa.Spec.Behavior.ScaleUp,
-		ScaleDownBehavior: hpa.Spec.Behavior.ScaleDown,
+		ScaleUpBehavior:   autoscalingapiv2.GenerateHPAScaleUpRules(hpa.Spec.Behavior.ScaleUp),
+		ScaleDownBehavior: autoscalingapiv2.GenerateHPAScaleDownRules(hpa.Spec.Behavior.ScaleDown),
 		MinReplicas:       minReplicas,
 		MaxReplicas:       hpa.Spec.MaxReplicas,
 		CurrentReplicas:   currentReplicas,
@@ -1105,8 +1107,12 @@ func (a *HorizontalController) stabilizeRecommendationWithBehaviors(args Normali
 	upDelaySeconds := *args.ScaleUpBehavior.StabilizationWindowSeconds
 	upCutoff := now.Add(-time.Second * time.Duration(upDelaySeconds))
 
+	var downDelaySeconds int32
 	downRecommendation := args.DesiredReplicas
-	downDelaySeconds := *args.ScaleDownBehavior.StabilizationWindowSeconds
+	if args.ScaleDownBehavior.StabilizationWindowSeconds != nil {
+		downDelaySeconds = *args.ScaleDownBehavior.StabilizationWindowSeconds
+	}
+
 	downCutoff := now.Add(-time.Second * time.Duration(downDelaySeconds))
 
 	// Calculate the upper and lower stabilization limits.

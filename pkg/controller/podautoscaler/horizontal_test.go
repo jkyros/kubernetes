@@ -5329,3 +5329,92 @@ func TestMultipleHPAs(t *testing.T) {
 
 	assert.Equal(t, hpaCount, len(processedHPA), "Expected to process all HPAs")
 }
+
+func TestNormalizeDesiredReplicasWithNilRules(t *testing.T) {
+	now := time.Now()
+	type TestCase struct {
+		name                         string
+		key                          string
+		recommendations              []timestampedRecommendation
+		currentReplicas              int32
+		prenormalizedDesiredReplicas int32
+		expectedStabilizedReplicas   int32
+		expectedRecommendations      []timestampedRecommendation
+	}
+	tests := []TestCase{
+		{
+			name:                         "dummy scaledown to check for nil rule panic",
+			key:                          "",
+			recommendations:              []timestampedRecommendation{},
+			currentReplicas:              100,
+			prenormalizedDesiredReplicas: 5,
+			expectedStabilizedReplicas:   5,
+			expectedRecommendations: []timestampedRecommendation{
+				{5, now},
+			},
+		},
+		{
+			name:                         "dummy scaleup to check for nil rule panic",
+			key:                          "",
+			recommendations:              []timestampedRecommendation{},
+			currentReplicas:              4,
+			prenormalizedDesiredReplicas: 5,
+			expectedStabilizedReplicas:   5,
+			expectedRecommendations: []timestampedRecommendation{
+				{5, now},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			hc := HorizontalController{
+				recommendations: map[string][]timestampedRecommendation{
+					tc.key: tc.recommendations,
+				},
+			}
+
+			testArgs := []autoscalingv2.HorizontalPodAutoscalerBehavior{
+				{
+					ScaleUp:   nil,
+					ScaleDown: &autoscalingv2.HPAScalingRules{},
+				},
+				{
+					ScaleUp:   &autoscalingv2.HPAScalingRules{},
+					ScaleDown: nil,
+				},
+				{
+					ScaleUp:   nil,
+					ScaleDown: nil,
+				},
+			}
+
+			for _, testArg := range testArgs {
+
+				hpa := autoscalingv2.HorizontalPodAutoscaler{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "",
+						Namespace: "",
+					},
+					Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
+						Behavior:    &testArg,
+						MaxReplicas: 100,
+					},
+				}
+				assert.NotPanics(t, func() {
+					r := hc.normalizeDesiredReplicasWithBehaviors(&hpa, "", tc.currentReplicas, tc.prenormalizedDesiredReplicas, 0)
+					assert.Equal(t, tc.expectedStabilizedReplicas, r, "expected replicas do not match")
+					if tc.expectedRecommendations != nil {
+						if !assert.Len(t, hc.recommendations[tc.key], len(tc.expectedRecommendations), "stored recommendations differ in length") {
+							return
+						}
+						for i, r := range hc.recommendations[tc.key] {
+							expectedRecommendation := tc.expectedRecommendations[i]
+							assert.Equal(t, expectedRecommendation.recommendation, r.recommendation, "stored recommendation differs at position %d", i)
+						}
+					}
+				})
+			}
+		})
+	}
+}
