@@ -52,7 +52,7 @@ var (
 	// So we can not rewrite the command line option from here
 	scaleDownLimitPercent    int32 = 100
 	defaultHPAScaleDownRules       = autoscalingv2.HPAScalingRules{
-		StabilizationWindowSeconds: nil,
+		StabilizationWindowSeconds: &scaleUpStabilizationSeconds,
 		SelectPolicy:               &maxPolicy,
 		Policies: []autoscalingv2.HPAScalingPolicy{
 			{
@@ -98,6 +98,7 @@ func SetDefaults_HorizontalPodAutoscalerBehavior(obj *autoscalingv2.HorizontalPo
 		obj.Spec.Behavior.ScaleUp = GenerateHPAScaleUpRules(obj.Spec.Behavior.ScaleUp)
 		obj.Spec.Behavior.ScaleDown = GenerateHPAScaleDownRules(obj.Spec.Behavior.ScaleDown)
 	}
+
 }
 
 // GenerateHPAScaleUpRules returns a fully-initialized HPAScalingRules value

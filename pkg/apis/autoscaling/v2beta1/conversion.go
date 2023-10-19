@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 
 	autoscalingv2beta1 "k8s.io/api/autoscaling/v2beta1"
+	autoscalingapiv2 "k8s.io/kubernetes/pkg/apis/autoscaling/v2"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/conversion"
@@ -304,7 +305,7 @@ func Convert_autoscaling_HorizontalPodAutoscaler_To_v2beta1_HorizontalPodAutosca
 			out.Annotations = autoscaling.DeepCopyStringMap(out.Annotations)
 		}
 		out.Annotations[autoscaling.BehaviorSpecsAnnotation] = string(behaviorEnc)
-	}
+	} // technically this would be safe since we skip behaviors if they're nil, but for completness we'll set this
 
 	return nil
 }
@@ -317,7 +318,18 @@ func Convert_v2beta1_HorizontalPodAutoscaler_To_autoscaling_HorizontalPodAutosca
 	if behaviorEnc, hasBehaviors := out.Annotations[autoscaling.BehaviorSpecsAnnotation]; hasBehaviors {
 		// TODO: this is unmarshaling an internal type. Fix this without breaking backwards compatibility with n-1 API servers.
 		var behavior autoscaling.HorizontalPodAutoscalerBehavior
-		if err := json.Unmarshal([]byte(behaviorEnc), &behavior); err == nil && behavior != (autoscaling.HorizontalPodAutoscalerBehavior{}) {
+		if err := json.Unmarshal([]byte(behaviorEnc), &behavior); err == nil {
+
+			if behavior.ScaleUp == nil {
+				behavior.ScaleUp = &autoscaling.HPAScalingRules{}
+				autoscalingapiv2.Convert_v2_HPAScalingRules_To_autoscaling_HPAScalingRules(autoscalingapiv2.GenerateHPAScaleUpRules(nil), behavior.ScaleUp, s)
+			}
+
+			if behavior.ScaleDown == nil {
+				behavior.ScaleDown = &autoscaling.HPAScalingRules{}
+				autoscalingapiv2.Convert_v2_HPAScalingRules_To_autoscaling_HPAScalingRules(autoscalingapiv2.GenerateHPAScaleDownRules(nil), behavior.ScaleDown, s)
+			}
+
 			// only move well-formed data from annotations to fields
 			out.Spec.Behavior = &behavior
 		}
