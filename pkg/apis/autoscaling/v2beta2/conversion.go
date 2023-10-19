@@ -18,6 +18,7 @@ package v2beta2
 
 import (
 	autoscalingv2beta2 "k8s.io/api/autoscaling/v2beta2"
+	autoscalingapiv2 "k8s.io/kubernetes/pkg/apis/autoscaling/v2"
 
 	"k8s.io/apimachinery/pkg/conversion"
 	"k8s.io/kubernetes/pkg/apis/autoscaling"
@@ -38,5 +39,20 @@ func Convert_v2beta2_HorizontalPodAutoscaler_To_autoscaling_HorizontalPodAutosca
 	}
 	// v2beta2 round-trips to internal without any serialized annotations, make sure any from other versions don't get serialized
 	out.Annotations, _ = autoscaling.DropRoundTripHorizontalPodAutoscalerAnnotations(out.Annotations)
+
+	// technically this would be safe since we skip behaviors if they're nil, but for completness we'll set this
+	if out.Spec.Behavior == nil {
+		if err := autoscalingapiv2.Convert_v2_HorizontalPodAutoscalerBehavior_To_autoscaling_HorizontalPodAutoscalerBehavior(nil, out.Spec.Behavior, s); err != nil {
+			return err
+		}
+	}
+
+	if out.Spec.Behavior.ScaleUp == nil {
+		autoscalingapiv2.Convert_v2_HPAScalingRules_To_autoscaling_HPAScalingRules(autoscalingapiv2.GenerateHPAScaleUpRules(nil), out.Spec.Behavior.ScaleDown, s)
+	}
+
+	if out.Spec.Behavior.ScaleDown == nil {
+		autoscalingapiv2.Convert_v2_HPAScalingRules_To_autoscaling_HPAScalingRules(autoscalingapiv2.GenerateHPAScaleDownRules(nil), out.Spec.Behavior.ScaleDown, s)
+	}
 	return nil
 }

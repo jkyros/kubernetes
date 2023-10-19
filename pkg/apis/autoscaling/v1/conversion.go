@@ -21,6 +21,8 @@ import (
 
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 
+	autoscalingapiv2 "k8s.io/kubernetes/pkg/apis/autoscaling/v2"
+
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/conversion"
 	"k8s.io/kubernetes/pkg/apis/autoscaling"
@@ -448,6 +450,20 @@ func Convert_v1_HorizontalPodAutoscaler_To_autoscaling_HorizontalPodAutoscaler(i
 
 	// drop round-tripping annotations after converting to internal
 	out.Annotations, _ = autoscaling.DropRoundTripHorizontalPodAutoscalerAnnotations(out.Annotations)
+
+	if out.Spec.Behavior != nil {
+
+		// technically this would be safe since we skip behaviors if they're nil, but for completness we'll set this
+		if out.Spec.Behavior.ScaleUp == nil {
+			out.Spec.Behavior.ScaleUp = &autoscaling.HPAScalingRules{}
+			autoscalingapiv2.Convert_v2_HPAScalingRules_To_autoscaling_HPAScalingRules(autoscalingapiv2.GenerateHPAScaleUpRules(nil), out.Spec.Behavior.ScaleUp, s)
+		}
+
+		if out.Spec.Behavior.ScaleDown == nil {
+			out.Spec.Behavior.ScaleDown = &autoscaling.HPAScalingRules{}
+			autoscalingapiv2.Convert_v2_HPAScalingRules_To_autoscaling_HPAScalingRules(autoscalingapiv2.GenerateHPAScaleDownRules(nil), out.Spec.Behavior.ScaleDown, s)
+		}
+	}
 
 	return nil
 }
