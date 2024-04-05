@@ -1095,6 +1095,114 @@ func doPodResizeTests() {
 			},
 		},
 		{
+			name: "Burstable QoS pod, one container with cpu & memory requests - decrease cpu request",
+			containers: []TestContainerInfo{
+				{
+					Name:      "c1",
+					Resources: &ContainerResources{CPUReq: "200m", MemReq: "200Mi"},
+				},
+			},
+			patchString: `{"spec":{"containers":[
+						{"name":"c1", "resources":{"requests":{"cpu":"100m"}}}
+					]}}`,
+			expected: []TestContainerInfo{
+				{
+					Name:      "c1",
+					Resources: &ContainerResources{CPUReq: "100m", MemReq: "200Mi"},
+				},
+			},
+		},
+		{
+			name: "Burstable QoS pod, one container with cpu & memory requests - increase cpu request",
+			containers: []TestContainerInfo{
+				{
+					Name:      "c1",
+					Resources: &ContainerResources{CPUReq: "100m", MemReq: "200Mi"},
+				},
+			},
+			patchString: `{"spec":{"containers":[
+						{"name":"c1", "resources":{"requests":{"cpu":"200m"}}}
+					]}}`,
+			expected: []TestContainerInfo{
+				{
+					Name:      "c1",
+					Resources: &ContainerResources{CPUReq: "200m", MemReq: "200Mi"},
+				},
+			},
+		},
+		{
+			name: "Burstable QoS pod, one container with cpu & memory requests + cpu limits - remove cpu limits",
+			containers: []TestContainerInfo{
+				{
+					Name:      "c1",
+					Resources: &ContainerResources{CPUReq: "100m", MemReq: "200Mi", CPULim: "200m"},
+				},
+			},
+			patchString: `{"spec":{"containers":[
+						{"name":"c1", "resources":{"requests":{"cpu":"100m","memory":"200Mi"},"limits":{"$patch": "delete","cpu":"200m"}}}
+					]}}`,
+			expected: []TestContainerInfo{
+				{
+					Name:      "c1",
+					Resources: &ContainerResources{CPUReq: "100m", MemReq: "200Mi"},
+				},
+			},
+		},
+		{
+			name: "Burstable QoS pod, one container with cpu & memory requests + memory limits - remove memory limits",
+			containers: []TestContainerInfo{
+				{
+					Name:      "c1",
+					Resources: &ContainerResources{CPUReq: "100m", MemReq: "200Mi", MemLim: "300Mi"},
+				},
+			},
+			patchString: `{"spec":{"containers":[
+						{"name":"c1", "resources":{"requests":{"cpu":"100m","memory":"200Mi"},"limits":{"$patch": "delete","memory":"300Mi"}}}
+					]}}`,
+			expected: []TestContainerInfo{
+				{
+					Name:      "c1",
+					Resources: &ContainerResources{CPUReq: "100m", MemReq: "200Mi"},
+				},
+			},
+		},
+		{
+			name: "Burstable QoS pod, one container with cpu & memory requests - add cpu limits",
+			containers: []TestContainerInfo{
+				{
+					Name:      "c1",
+					Resources: &ContainerResources{CPUReq: "100m", MemReq: "200Mi"},
+				},
+			},
+			patchString: `{"spec":{"containers":[
+						{"name":"c1", "resources":{"requests":{"cpu":"100m"},"limits":{"cpu":"200m"}}}
+					]}}`,
+			expected: []TestContainerInfo{
+				{
+					Name:      "c1",
+					Resources: &ContainerResources{CPUReq: "100m", MemReq: "200Mi", CPULim: "200m"},
+				},
+			},
+		},
+		{
+			name: "Burstable QoS pod, one container with cpu & memory requests - add memory limits",
+			containers: []TestContainerInfo{
+				{
+					Name:      "c1",
+					Resources: &ContainerResources{CPUReq: "100m", MemReq: "200Mi"},
+				},
+			},
+			patchString: `{"spec":{"containers":[
+						{"name":"c1", "resources":{"requests":{"cpu":"100m"},"limits":{"memory":"200Mi"}}}
+					]}}`,
+			expected: []TestContainerInfo{
+				{
+					Name:      "c1",
+					Resources: &ContainerResources{CPUReq: "100m", MemReq: "200Mi", MemLim: "200Mi"},
+				},
+			},
+		},
+		{
 			name: "Guaranteed QoS pod, one container - increase CPU (NotRequired) & memory (RestartContainer)",
 			containers: []TestContainerInfo{
 				{
@@ -1322,6 +1430,13 @@ func doPodResizeTests() {
 
 			patchAndVerify := func(patchString string, expectedContainers []TestContainerInfo, initialContainers []TestContainerInfo, opStr string, isRollback bool) {
 				ginkgo.By(fmt.Sprintf("patching pod for %s", opStr))
+
+				// TODO(jkyros): so when we completely remove all keys from the limits map, the strategic merge patch
+				// doesn't take it out, it just leaves it alone. This was fine before I added the add limits/remove limits
+				// test cases, but now that they're here we fail if we don't adjust the patch. We should find a cleaner
+				// way to do this, but this does work.
+				patchString = strings.Replace(patchString, `"limits":{}`, `"limits":{"$patch":"delete"}`, 1)
+
 				patchedPod, pErr = f.ClientSet.CoreV1().Pods(newPod.Namespace).Patch(context.TODO(), newPod.Name,
 					types.StrategicMergePatchType, []byte(patchString), metav1.PatchOptions{})
 				framework.ExpectNoError(pErr, fmt.Sprintf("failed to patch pod for %s", opStr))

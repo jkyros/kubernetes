@@ -552,7 +552,9 @@ func isInPlacePodVerticalScalingAllowed(pod *v1.Pod) bool {
 
 func (m *kubeGenericRuntimeManager) computePodResizeAction(pod *v1.Pod, containerIdx int, kubeContainerStatus *kubecontainer.Status, changes *podActions) bool {
 	container := pod.Spec.Containers[containerIdx]
-	if container.Resources.Limits == nil || len(pod.Status.ContainerStatuses) == 0 {
+	// TODO(jkyros): taking out the "nil limits check" has the side effect of allowing pods that ask for 0 cpushares and get corrected to 2 to roll through
+	// here and get resized rather than getting rejected
+	if len(pod.Status.ContainerStatuses) == 0 {
 		return true
 	}
 
@@ -696,12 +698,27 @@ func (m *kubeGenericRuntimeManager) doPodResizeAction(pod *v1.Pod, podStatus *ku
 	// If an error occurs at any point, abort. Let future syncpod iterations retry the unfinished stuff.
 	resizeContainers := func(rName v1.ResourceName, currPodCgLimValue, newPodCgLimValue, currPodCgReqValue, newPodCgReqValue int64) error {
 		var err error
+
+		// TODO(jkyros): ResourceConfigForPod gives us -1 for our current limit if the limit is disabled, so we need to make sure
+		// we handle that here. Should we just use -1s instead of zeroes when we do all our calculations in calculateLinuxResources ?
+
+		// If our new limit is nil/unlimited and our old one wasn't unlimited, we should update, and since it's an increese, it should
+		// happen _before_ containers get updated
+		if newPodCgLimValue == -1 && newPodCgLimValue != currPodCgLimValue {
+			klog.Infof("JKYROS: %s new %s LIM %d DISABLED curr %d", rName, pod.Name, newPodCgLimValue, currPodCgLimValue)
+			if err = setPodCgroupConfig(rName, true); err != nil {
+				return err
+			}
+		}
+
 		if newPodCgLimValue > currPodCgLimValue {
+			klog.Infof("JKYROS: %s new %s LIM %d GREATER curr %d", rName, pod.Name, newPodCgLimValue, currPodCgLimValue)
 			if err = setPodCgroupConfig(rName, true); err != nil {
 				return err
 			}
 		}
 		if newPodCgReqValue > currPodCgReqValue {
+			klog.Infof("JKYROS: %s new %s REQ %d GREATER curr %d", rName, pod.Name, newPodCgReqValue, currPodCgReqValue)
 			if err = setPodCgroupConfig(rName, false); err != nil {
 				return err
 			}
@@ -712,10 +729,14 @@ func (m *kubeGenericRuntimeManager) doPodResizeAction(pod *v1.Pod, podStatus *ku
 				return err
 			}
 		}
-		if newPodCgLimValue < currPodCgLimValue {
+
+		// -1 is smaller, but the effect it has is bigger, so we're excluting it here
+		if newPodCgLimValue != -1 && newPodCgLimValue < currPodCgLimValue {
+			klog.Infof("JKYROS: %s new %s LIM %d LESS curr %d", rName, pod.Name, newPodCgLimValue, currPodCgLimValue)
 			err = setPodCgroupConfig(rName, true)
 		}
 		if newPodCgReqValue < currPodCgReqValue {
+			klog.Infof("JKYROS: %s new %s REQ %d LESS curr %d", rName, pod.Name, newPodCgReqValue, currPodCgReqValue)
 			if err = setPodCgroupConfig(rName, false); err != nil {
 				return err
 			}
@@ -724,9 +745,8 @@ func (m *kubeGenericRuntimeManager) doPodResizeAction(pod *v1.Pod, podStatus *ku
 	}
 	if len(podContainerChanges.ContainersToUpdate[v1.ResourceMemory]) > 0 || podContainerChanges.UpdatePodResources {
 		if podResources.Memory == nil {
-			klog.ErrorS(nil, "podResources.Memory is nil", "pod", pod.Name)
-			result.Fail(fmt.Errorf("podResources.Memory is nil for pod %s", pod.Name))
-			return
+			emptyMemory := int64(-1)
+			podResources.Memory = &emptyMemory
 		}
 		currentPodMemoryConfig, err := pcm.GetPodCgroupConfig(pod, v1.ResourceMemory)
 		if err != nil {
@@ -751,17 +771,35 @@ func (m *kubeGenericRuntimeManager) doPodResizeAction(pod *v1.Pod, podStatus *ku
 		}
 	}
 	if len(podContainerChanges.ContainersToUpdate[v1.ResourceCPU]) > 0 || podContainerChanges.UpdatePodResources {
-		if podResources.CPUQuota == nil || podResources.CPUShares == nil {
-			klog.ErrorS(nil, "podResources.CPUQuota or podResources.CPUShares is nil", "pod", pod.Name)
-			result.Fail(fmt.Errorf("podResources.CPUQuota or podResources.CPUShares is nil for pod %s", pod.Name))
+		if podResources.CPUShares == nil {
+			klog.ErrorS(nil, "podResources.CPUShares is nil", "pod", pod.Name)
+			result.Fail(fmt.Errorf("podResources.CPUShares is nil for pod %s", pod.Name))
 			return
 		}
+
 		currentPodCpuConfig, err := pcm.GetPodCgroupConfig(pod, v1.ResourceCPU)
 		if err != nil {
 			klog.ErrorS(err, "GetPodCgroupConfig for CPU failed", "pod", pod.Name)
 			result.Fail(err)
 			return
 		}
+
+		// If we don't have quotas, make sure the underlying quotas get removed
+		if podResources.CPUQuota == nil {
+			// If we set this to -1, the underlying layers will set it to the string "max" for v2 if we
+			// manage to get it there
+			emptyQuota := int64(-1)
+			// TODO(jkyros): should we blank the period too when we blank the quota, or should we default it, or does it matter?
+			emptyPeriod := uint64(quotaPeriod)
+			podResources.CPUQuota = &emptyQuota
+			podResources.CPUPeriod = &emptyPeriod
+		}
+
+		// TODO(jkyros): so what seems to happen here is, it looks like it works, but the underlying quotas don't get ajusted
+		// so the cgroup is wrong. It looks like when we remove limits, the period goes to -1, but the quota stays the same
+		klog.InfoS("JKYROS: Resource Config For Pod "+pod.Name, "podSpecified", podResources)
+		klog.InfoS("JKYROS: Resource Config For Pod "+pod.Name, "podUnderlyingHas", currentPodCpuConfig)
+
 		if errResize := resizeContainers(v1.ResourceCPU, *currentPodCpuConfig.CPUQuota, *podResources.CPUQuota,
 			int64(*currentPodCpuConfig.CPUShares), int64(*podResources.CPUShares)); errResize != nil {
 			result.Fail(errResize)

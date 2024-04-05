@@ -47,6 +47,7 @@ const (
 	// Cgroup2MemoryHigh is memory.high for cgroup v2
 	Cgroup2MemoryHigh      string = "memory.high"
 	Cgroup2MaxCpuLimit     string = "max"
+	Cgroup2MaxMemoryLimit  string = "max"
 	Cgroup2MaxSwapFilename string = "memory.swap.max"
 )
 
@@ -474,9 +475,17 @@ func readCgroupMemoryConfig(cgroupPath string, memLimitFile string) (*ResourceCo
 }
 
 func writeCgroupMemoryLimit(memoryLimitFileLocation string, resourceConfig *ResourceConfig) error {
-	memLimit := strconv.FormatInt(*resourceConfig.Memory, 10)
-	if err := os.WriteFile(memoryLimitFileLocation, []byte(memLimit), 0700); err != nil {
-		return fmt.Errorf("failed to write %v to %v: %w", memLimit, memoryLimitFileLocation, err)
+	// We need to be able to remove the limit, so default to max and only set the limit if we have one
+	memLimitStr := Cgroup2MaxMemoryLimit
+	// TODO(jkyros): find a better way to do this, but we need the v1 cgroups to get "-1" to turn off the limit, and we need
+	// v2 to get "max" to turn off the limit. This is "if we're on v1 or the memory config is > -1, just write the number". Zero
+	// should be impossible here under normal operation because zero gets converted to -1 when we translate pod stuff to
+	// cgroup stuff
+	if memoryLimitFileLocation == cgroupv1MemLimitFile || *resourceConfig.Memory > -1 {
+		memLimitStr = strconv.FormatInt(*resourceConfig.Memory, 10)
+	}
+	if err := os.WriteFile(memoryLimitFileLocation, []byte(memLimitStr), 0700); err != nil {
+		return fmt.Errorf("failed to write %v to %v: %w", memLimitStr, memoryLimitFileLocation, err)
 	}
 	//TODO(vinaykul,InPlacePodVerticalScaling): Add memory request support
 	return nil

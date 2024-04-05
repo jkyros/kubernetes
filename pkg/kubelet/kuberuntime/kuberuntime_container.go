@@ -392,9 +392,21 @@ func (m *kubeGenericRuntimeManager) generateContainerConfig(ctx context.Context,
 }
 
 func (m *kubeGenericRuntimeManager) updateContainerResources(pod *v1.Pod, container *v1.Container, containerID kubecontainer.ContainerID) error {
+
 	containerResources := m.generateContainerResources(pod, container)
 	if containerResources == nil {
 		return fmt.Errorf("container %q updateContainerResources failed: cannot generate resources config", containerID.String())
+	}
+
+	// TODO(jkyros): I did this here because I specifically wanted to use it for InPlacePodVerticalScaling. It's possible there is a more elegant place
+	// "higher up" where it would make sense to do the translation, but ultimately the nils from our nonexistant limits need to turn into -1/max values
+	// for the cgroup to handle them properly. calculateLinuxResources seems like a better place, but I was squeamish to do it there because that gets
+	// used in the overhead calcualtions, and I don't know if overhead can be zero, but if it can, a -1 there doesn't make sense.
+	if containerResources.Linux.CpuQuota == 0 {
+		containerResources.Linux.CpuQuota = -1
+	}
+	if containerResources.Linux.MemoryLimitInBytes == 0 {
+		containerResources.Linux.MemoryLimitInBytes = -1
 	}
 	ctx := context.Background()
 	err := m.runtimeService.UpdateContainerResources(ctx, containerID.ID, containerResources)
