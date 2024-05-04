@@ -1175,12 +1175,12 @@ func doPodResizeTests() {
 				},
 			},
 			patchString: `{"spec":{"containers":[
-						{"name":"c1", "resources":{"requests":{"cpu":"100m"},"limits":{"cpu":"200m"}}}
+						{"name":"c1", "resources":{"requests":{"cpu":"100m"},"limits":{"cpu":"100m"}}}
 					]}}`,
 			expected: []TestContainerInfo{
 				{
 					Name:      "c1",
-					Resources: &ContainerResources{CPUReq: "100m", MemReq: "200Mi", CPULim: "200m"},
+					Resources: &ContainerResources{CPUReq: "100m", MemReq: "200Mi", CPULim: "100m"},
 				},
 			},
 		},
